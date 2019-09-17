@@ -3213,6 +3213,10 @@ limitations under the License.
       }
     }
 
+    function deepClone(obj) {
+      return JSON.parse(JSON.stringify(obj));
+    }
+
     (function() {
       const PLUGIN_NAME = 'whatif';
 
@@ -3259,6 +3263,13 @@ limitations under the License.
             type: String,
           },
           maxInferenceEntriesPerRun: Number,
+          // In performance analysis, when slicing by numeric features:
+          // - Up to this number of unique values, we consider each value as a slice.
+          // - Above this number, we aggregate values into buckets.
+          maxUniqueValueSlices: {
+            type: Number,
+            value: 5,
+          },
 
           // Inferences from servo.
           inferences: {
@@ -4123,6 +4134,45 @@ limitations under the License.
         },
 
         /**
+         * Whether values should be aggregated in buckets if slicing by this feature.
+         */
+        shouldBeAggregated_: function(feature) {
+          return (
+            this.distanceStats_[feature] &&
+            this.distanceStats_[feature].isNumeric &&
+            this.stats[feature].uniqueCount > this.maxUniqueValueSlices
+          );
+        },
+
+        getPrintableBucketLabel_: function(bucket) {
+          return bucket.lowValue + '–' + bucket.highValue;
+        },
+
+        /**
+         * Get the key to which this example belongs when the dataset is sliced by the given feature(s).
+         */
+        getSliceKey_: function(example, feature1, feature2) {
+          const this_ = this;
+          function findBucket(feature) {
+            const buckets = this_.distanceStats_[feature].bucketsList;
+            for (let i = 0; i < buckets.length; i++) {
+              if (example[feature] <= buckets[i].highValue) {
+                return buckets[i];
+              }
+            }
+          }
+          function maybeAggregate(feature) {
+            return this_.shouldBeAggregated_(feature)
+              ? this_.getPrintableBucketLabel_(findBucket(feature))
+              : example[feature];
+          }
+          return this.createCombinedValueString_(
+            maybeAggregate(feature1),
+            maybeAggregate(feature2)
+          );
+        },
+
+        /**
          * Creates a list of all feature values of the selected breakdown feature
          * or feature crosses if two breakdown features are selected, and gets
          * inference stats per breakdown.
@@ -4132,77 +4182,29 @@ limitations under the License.
           // back to custom (default).
           this.resetOptimizationSelected_();
 
-          const feature1 = this.selectedBreakdownFeature;
-          if (feature1 == '') {
-            this.selectedSecondBreakdownFeature = '';
-          }
-          const feature2 = this.selectedSecondBreakdownFeature;
-          const thresholds = [];
           const thresholdsMap = {};
-          if (feature1.length !== 0) {
-            let feature1Values = this.stats[feature1].valueHash;
-            // Only breakdown performance by features that don't contain fully-
-            // unique values per example.
-            if (
-              this.stats[feature1].totalCount !=
-              this.examplesAndInferences.length
-            ) {
-              feature1Values = Object.assign({}, feature1Values, {
-                undefined: '',
-              });
-            }
-            let feature2Values = {undefined: ''};
-            if (feature2.length != 0) {
-              feature2Values = this.stats[feature2].valueHash;
-              if (
-                this.stats[feature2].totalCount !=
-                this.examplesAndInferences.length
-              ) {
-                feature2Values = Object.assign({}, feature2Values, {
-                  undefined: '',
-                });
+          this.visdata.forEach(
+            function(item) {
+              const key1 = this.getSliceKey_(
+                item,
+                this.selectedBreakdownFeature
+              );
+              const key2 = this.getSliceKey_(
+                item,
+                this.selectedSecondBreakdownFeature
+              );
+              const key = this.createCombinedValueString_(key1, key2);
+              if (!(key in thresholdsMap)) {
+                thresholdsMap[key] = {
+                  value: key1,
+                  value2: key2,
+                  threshold: deepClone(this.overallThresholds),
+                  opened: false,
+                };
               }
-            }
-
-            // For the selected feature, set up a dict of each feature value in
-            // the dataset to the threshold. Add this to a list (for display
-            // purposes) and create a map of feature value to entry in that list.
-            for (var key1 in feature1Values) {
-              if (feature1Values.hasOwnProperty(key1)) {
-                for (var key2 in feature2Values) {
-                  if (feature2Values.hasOwnProperty(key2)) {
-                    const feature1Value =
-                      key1 == 'undefined'
-                        ? undefined
-                        : this.stats[feature1].valueHash[key1].value;
-                    const feature2Value =
-                      key2 == 'undefined'
-                        ? undefined
-                        : this.stats[feature2].valueHash[key2].value;
-                    // Deep copy thresholds for each facet
-                    const modelThresholds = [];
-                    for (let i = 0; i < this.overallThresholds.length; i++) {
-                      modelThresholds.push({
-                        threshold: this.overallThresholds[i].threshold,
-                      });
-                    }
-                    const thresh = {
-                      value: feature1Value,
-                      value2: feature2Value,
-                      threshold: modelThresholds,
-                      opened: false,
-                    };
-                    thresholds.push(thresh);
-                    const mapKey = this.createCombinedValueString_(
-                      feature1Value,
-                      feature2Value
-                    );
-                    thresholdsMap[mapKey] = thresh;
-                  }
-                }
-              }
-            }
-          }
+            }.bind(this)
+          );
+          const thresholds = Object.values(thresholdsMap);
           this.set('featureValueThresholds', thresholds);
           this.set('featureValueThresholdsMap', thresholdsMap);
           this.refreshInferences_(false);
@@ -4277,9 +4279,10 @@ limitations under the License.
                   const item = this.visdata[i];
                   let facetedStats = null;
                   if (this.selectedBreakdownFeature != '') {
-                    const facetKey = this.createCombinedValueString_(
-                      item[this.selectedBreakdownFeature],
-                      item[this.selectedSecondBreakdownFeature]
+                    const facetKey = this.getSliceKey_(
+                      item,
+                      this.selectedBreakdownFeature,
+                      this.selectedSecondBreakdownFeature
                     );
                     facetedStats = inferenceStats.faceted[facetKey];
                     if (!facetedStats) {
@@ -4356,9 +4359,10 @@ limitations under the License.
                   const item = this.visdata[i];
                   let facetedStats = null;
                   if (this.selectedBreakdownFeature != '') {
-                    const facetKey = this.createCombinedValueString_(
-                      item[this.selectedBreakdownFeature],
-                      item[this.selectedSecondBreakdownFeature]
+                    const facetKey = this.getSliceKey_(
+                      item,
+                      this.selectedBreakdownFeature,
+                      this.selectedSecondBreakdownFeature
                     );
                     facetedStats = inferenceStats.faceted[facetKey];
                     if (!facetedStats) {
@@ -4412,9 +4416,10 @@ limitations under the License.
                   const item = this.visdata[i];
                   let facetedStats = null;
                   if (this.selectedBreakdownFeature != '') {
-                    const facetKey = this.createCombinedValueString_(
-                      item[this.selectedBreakdownFeature],
-                      item[this.selectedSecondBreakdownFeature]
+                    const facetKey = this.getSliceKey_(
+                      item,
+                      this.selectedBreakdownFeature,
+                      this.selectedSecondBreakdownFeature
                     );
                     facetedStats = inferenceStats.faceted[facetKey];
                     if (!facetedStats) {
@@ -5922,9 +5927,10 @@ limitations under the License.
           // case), then get the appropriate threshold for this item's value for
           // that feature. Otherwise the overall threshold will be used.
           if (feature1.length !== 0) {
-            let key = this.createCombinedValueString_(
-              item[feature1],
-              item[feature2]
+            let key = this.getSliceKey_(
+              item,
+              this.selectedBreakdownFeature,
+              this.selectedSecondBreakdownFeature
             );
             thresholds = this.featureValueThresholdsMap[key].threshold;
           }
@@ -6082,12 +6088,14 @@ limitations under the License.
             const featureStats = statsProto.datasetsList[0].featuresList[i];
             const feature = featureStats.name;
             this.distanceStats_[feature] = {
-              isNumeric: featureStats.numStats != null
+              isNumeric: featureStats.numStats != null,
             };
             if (this.distanceStats_[feature].isNumeric) {
               // For numeric features, store standard deviation.
               this.distanceStats_[feature].stdDev =
                 featureStats.numStats.stdDev;
+              this.distanceStats_[feature].bucketsList =
+                featureStats.numStats.histogramsList[0].bucketsList;
             } else {
               // For categorical features, calculate and store  the probability
               // that any two feature values across all examples are the same.
