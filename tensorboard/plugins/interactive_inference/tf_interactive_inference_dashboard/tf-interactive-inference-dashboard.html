@@ -3263,6 +3263,13 @@ limitations under the License.
             type: String,
           },
           maxInferenceEntriesPerRun: Number,
+          // In performance analysis, when slicing by numeric features:
+          // - Up to this number of unique values, we consider each value as a slice.
+          // - Above this number, we aggregate values into buckets.
+          maxUniqueValueSlices: {
+            type: Number,
+            value: 10,
+          },
 
           // Inferences from servo.
           inferences: {
@@ -4127,13 +4134,13 @@ limitations under the License.
         },
 
         /**
-         * Whether slices by this feature should be aggregated in buckets.
+         * Whether values of this feature should be aggregated in bucket slices.
          */
         shouldBeAggregated_: function(feature) {
           return (
             this.distanceStats_[feature] &&
             this.distanceStats_[feature].isNumeric &&
-            this.stats[feature].uniqueCount > 5  // TODO: Make this more configurable.
+            this.stats[feature].uniqueCount > this.maxUniqueValueSlices
           );
         },
 
@@ -4141,6 +4148,7 @@ limitations under the License.
          * A human-readable consistent labeling for buckets.
          */
         getPrintableBucketLabel_: function(bucket) {
+          // TODO: Format these numbers.
           return bucket.lowValue + '–' + bucket.highValue;
         },
 
