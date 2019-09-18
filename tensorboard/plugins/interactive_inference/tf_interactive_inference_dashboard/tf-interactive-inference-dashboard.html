@@ -3654,6 +3654,8 @@ limitations under the License.
             type: Boolean,
             value: true,
           },
+          // A map from each feature to a formatter function
+          featureFormatters_: Object,
         },
 
         observers: [
@@ -4147,9 +4149,16 @@ limitations under the License.
         /**
          * A human-readable consistent labeling for buckets.
          */
-        getPrintableBucketLabel_: function(bucket) {
-          // TODO: Format these numbers.
-          return bucket.lowValue + '–' + bucket.highValue;
+        getPrintableBucketLabel_: function(bucket, feature) {
+          const formatter = this.featureFormatters_[feature];
+          const right = this.stats[feature].numberMax === bucket.highValue ? ']' : ')';
+          return (
+            '[' +
+            formatter(bucket.lowValue) +
+            ', ' +
+            formatter(bucket.highValue) +
+            right
+          );
         },
 
         /**
@@ -4160,14 +4169,17 @@ limitations under the License.
           function findBucket(feature) {
             const buckets = this_.distanceStats_[feature].bucketsList;
             for (let i = 0; i < buckets.length; i++) {
-              if (example[feature] <= buckets[i].highValue) {
-                return buckets[i];
+              if (example[feature] < buckets[i].highValue) {
+                return buckets[i]
               }
+            }
+            if (example[feature] === buckets[buckets.length - 1].highValue) {
+              return buckets[buckets.length - 1]
             }
           }
           function maybeAggregate(feature) {
             return this_.shouldBeAggregated_(feature)
-              ? this_.getPrintableBucketLabel_(findBucket(feature))
+              ? this_.getPrintableBucketLabel_(findBucket(feature), feature)
               : example[feature];
           }
           return this.createCombinedValueString_(
@@ -6062,6 +6074,7 @@ limitations under the License.
             {name: '', data: temp},
           ]);
           this.calculateDistanceStats_(this.$.overview.protoInput.toObject());
+          this.createFeatureFormatters_();
           const tempSelected = this.$.dive.selectedData;
           this.$.dive.selectedData = [];
           this.$.dive.selectedData = tempSelected;
@@ -6114,6 +6127,32 @@ limitations under the License.
               }
               this.distanceStats_[feature].probSameValue = probSameValue;
             }
+          }
+        },
+
+        /**
+         * Create a formatter for each feature and store them in `featureFormatters_`.
+         * For numeric features, we infer precision from the standard deviation.
+         * For categorical features, we just return the value.
+         */
+        createFeatureFormatters_: function() {
+          function createFeatureFormatter(feature, stats) {
+            if (stats.isNumeric) {
+              const decimals = Math.max(0, Math.ceil(-Math.log10(stats.stdDev)));
+              return function(value) {
+                return value.toFixed(decimals);
+              };
+            }
+            return function(value) {
+              return value;
+            };
+          }
+          this.featureFormatters_ = {};
+          for (let [feature, stats] of Object.entries(this.distanceStats_)) {
+            this.featureFormatters_[feature] = createFeatureFormatter(
+              feature,
+              stats
+            );
           }
         },
 
