@@ -4127,13 +4127,44 @@ limitations under the License.
         },
 
         /**
+         * Whether slices by this feature should be aggregated in buckets.
+         */
+        shouldBeAggregated_: function(feature) {
+          return (
+            this.distanceStats_[feature] &&
+            this.distanceStats_[feature].isNumeric &&
+            this.stats[feature].uniqueCount > 5  // TODO: Make this more configurable.
+          );
+        },
+
+        /**
+         * A human-readable consistent labeling for buckets.
+         */
+        getPrintableBucketLabel_: function(bucket) {
+          return bucket.lowValue + '–' + bucket.highValue;
+        },
+
+        /**
          * Get the key to which this example belongs when the dataset is sliced by the given feature(s).
          */
         getSliceKey_: function(example, feature1, feature2) {
-          // TODO: Aggregate numeric keys into buckets.
+          const this_ = this;
+          function findBucket(feature) {
+            const buckets = this_.distanceStats_[feature].bucketsList;
+            for (let i = 0; i < buckets.length; i++) {
+              if (example[feature] <= buckets[i].highValue) {
+                return buckets[i];
+              }
+            }
+          }
+          function maybeAggregate(feature) {
+            return this_.shouldBeAggregated_(feature)
+              ? this_.getPrintableBucketLabel_(findBucket(feature))
+              : example[feature];
+          }
           return this.createCombinedValueString_(
-            example[feature1],
-            example[feature2]
+            maybeAggregate(feature1),
+            maybeAggregate(feature2)
           );
         },
 
@@ -6053,12 +6084,14 @@ limitations under the License.
             const featureStats = statsProto.datasetsList[0].featuresList[i];
             const feature = featureStats.name;
             this.distanceStats_[feature] = {
-              isNumeric: featureStats.numStats != null
+              isNumeric: featureStats.numStats != null,
             };
             if (this.distanceStats_[feature].isNumeric) {
               // For numeric features, store standard deviation.
               this.distanceStats_[feature].stdDev =
                 featureStats.numStats.stdDev;
+              this.distanceStats_[feature].bucketsList =
+                featureStats.numStats.histogramsList[0].bucketsList;
             } else {
               // For categorical features, calculate and store  the probability
               // that any two feature values across all examples are the same.
