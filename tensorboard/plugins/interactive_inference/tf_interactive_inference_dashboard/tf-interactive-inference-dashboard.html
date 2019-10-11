@@ -4520,9 +4520,14 @@ limitations under the License.
          */
         getSliceKey_: function(example, feature1, feature2) {
           const bucketEdges = this.featureBucketEdges_;
+          const labelFeature = this.selectedLabelFeature;
+          const labelVocab = this.labelVocab;
           function maybeAggregate(feature) {
             if (feature && example[feature] === undefined) {
               return '?';
+            }
+            if (feature && feature === labelFeature || labelVocab.length > 0) {
+              return labelVocab[example[feature]]
             }
             const edges = bucketEdges[feature];
             if (edges) {
@@ -4684,24 +4689,28 @@ limitations under the License.
                       facetedStats = inferenceStats.faceted[facetKey];
                     }
                   }
-                  const label = item[this.selectedLabelFeature];
-                  const nonZeroClassification = this.getClassificationBestNonZero(
+                  const bestNonZero = this.getClassificationBestNonZero(
                     i,
                     modelInd
                   );
+                  const label = item[this.selectedLabelFeature];
+                  const actualPositive =
+                    this.labelVocab.length === 2
+                      ? this.labelVocab[label] === bestNonZero.vocabLabel
+                      : +label === +bestNonZero.label;
                   let thresh = 0;
                   for (; thresh <= 100; thresh++) {
-                    if (thresh > nonZeroClassification.score * 100) {
+                    if (thresh > bestNonZero.score * 100) {
                       break;
                     }
-                    const result = +label == +nonZeroClassification.label ? 'TP' : 'FP';
+                    const result = actualPositive ? 'TP' : 'FP';
                     inferenceStats.thresholds[thresh][result] += 1;
                     if (facetedStats) {
                       facetedStats[thresh][result] += 1;
                     }
                   }
                   for (; thresh <= 100; thresh++) {
-                    const result = label == null || +label == 0 ? 'TN' : 'FN';
+                    const result = actualPositive ? 'FN' : 'TN';
                     inferenceStats.thresholds[thresh][result] += 1;
                     if (facetedStats) {
                       facetedStats[thresh][result] += 1;
@@ -4719,6 +4728,7 @@ limitations under the License.
                     this.calcThresholdStats(inferenceStats.faceted[key]);
                   }
                 }
+                console.log(inferenceStats);
               } else if (this.isMultiClass_(this.modelType, this.multiClass)) {
                 // For multi-class classifiers, update the confusion matrices.
                 inferenceStats.results = {};
@@ -5408,29 +5418,21 @@ limitations under the License.
          * non-zero.
          */
         getClassificationBestNonZero: function(index, modelIndex) {
-          let indexForNonZeroLabel = 0;
-          const inferenceIndex =
-            this.examplesAndInferences[index].inferences.length - 1;
-          for (
-            let i = 0;
-            i <
-            this.examplesAndInferences[index].inferences[inferenceIndex][
-              modelIndex
-            ].length;
-            i++
-          ) {
+          const useVocab = this.labelVocab.length === 2;
+          const zeroLabel = useVocab ? this.labelVocab[0] : '0';
+          const inferences = this.examplesAndInferences[index].inferences;
+          const scores = inferences[inferences.length - 1][modelIndex];
+          let bestNonZero = {score: 0};
+          for (let i = 0; i < scores.length; i++) {
+            const label = useVocab ? scores[i].vocabLabel : scores[i].label;
             if (
-              +this.examplesAndInferences[index].inferences[inferenceIndex][
-                modelIndex
-              ][i].label !== 0
+              label !== zeroLabel &&
+              scores[i].score > bestNonZero.score
             ) {
-              indexForNonZeroLabel = i;
-              break;
+              bestNonZero = scores[i];
             }
           }
-          return this.examplesAndInferences[index].inferences[inferenceIndex][
-            modelIndex
-          ][indexForNonZeroLabel];
+          return bestNonZero;
         },
 
         /**
