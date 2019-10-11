@@ -4684,6 +4684,7 @@ limitations under the License.
                       facetedStats = inferenceStats.faceted[facetKey];
                     }
                   }
+                  const label = item[this.selectedLabelFeature];
                   const nonZeroClassification = this.getClassificationBestNonZero(
                     i,
                     modelInd
@@ -4693,35 +4694,17 @@ limitations under the License.
                     if (thresh > nonZeroClassification.score * 100) {
                       break;
                     }
-                    if (
-                      +item[this.selectedLabelFeature] ==
-                      +nonZeroClassification.label
-                    ) {
-                      inferenceStats.thresholds[thresh]['TP'] += 1;
-                      if (facetedStats) {
-                        facetedStats[thresh]['TP'] += 1;
-                      }
-                    } else {
-                      inferenceStats.thresholds[thresh]['FP'] += 1;
-                      if (facetedStats) {
-                        facetedStats[thresh]['FP'] += 1;
-                      }
+                    const result = +label == +nonZeroClassification.label ? 'TP' : 'FP';
+                    inferenceStats.thresholds[thresh][result] += 1;
+                    if (facetedStats) {
+                      facetedStats[thresh][result] += 1;
                     }
                   }
                   for (; thresh <= 100; thresh++) {
-                    if (
-                      item[this.selectedLabelFeature] == null ||
-                      +item[this.selectedLabelFeature] == 0
-                    ) {
-                      inferenceStats.thresholds[thresh]['TN'] += 1;
-                      if (facetedStats) {
-                        facetedStats[thresh]['TN'] += 1;
-                      }
-                    } else {
-                      inferenceStats.thresholds[thresh]['FN'] += 1;
-                      if (facetedStats) {
-                        facetedStats[thresh]['FN'] += 1;
-                      }
+                    const result = label == null || +label == 0 ? 'TN' : 'FN';
+                    inferenceStats.thresholds[thresh][result] += 1;
+                    if (facetedStats) {
+                      facetedStats[thresh][result] += 1;
                     }
                   }
                 }
